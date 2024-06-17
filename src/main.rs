@@ -34,7 +34,7 @@ fn main() -> io::Result<()> {
     }
 
     let qname = "yahoo.com";
-    let qtype = QueryType::MX;
+    let qtype = QueryType::A;
 
     if enable_logging {
         info!("Starting DNS query for {} with type {:?}", qname, qtype);
