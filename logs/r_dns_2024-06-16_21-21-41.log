@@ -1,0 +1,45 @@
+INFO [r_dns] Starting DNS query for yahoo.com with type MX
+INFO [r_dns] Socket bound to 0.0.0.0:43210
+INFO [r_dns] DNS query packet written successfully
+INFO [r_dns] Query sent to server ("8.8.8.8", 53)
+INFO [r_dns] Response received from server
+INFO [r_dns] DNS response packet parsed successfully
+INFO [r_dns] DnsHeader {
+    id: 6666,
+    recursion_desired: true,
+    truncated_message: false,
+    authoritative_answer: false,
+    opcode: 0,
+    response: true,
+    rescode: NOERROR,
+    checking_disabled: false,
+    authed_data: false,
+    z: false,
+    recursion_available: true,
+    questions: 1,
+    answers: 3,
+    authoritative_entries: 0,
+    resource_entries: 0,
+}
+INFO [r_dns] DnsQuestion {
+    name: "yahoo.com",
+    qtype: MX,
+}
+INFO [r_dns] MX {
+    domain: "yahoo.com",
+    preference: 1,
+    exchange: "mta7.am0.yahoodns.net",
+    ttl: 621,
+}
+INFO [r_dns] MX {
+    domain: "yahoo.com",
+    preference: 1,
+    exchange: "mta6.am0.yahoodns.net",
+    ttl: 621,
+}
+INFO [r_dns] MX {
+    domain: "yahoo.com",
+    preference: 1,
+    exchange: "mta5.am0.yahoodns.net",
+    ttl: 621,
+}
