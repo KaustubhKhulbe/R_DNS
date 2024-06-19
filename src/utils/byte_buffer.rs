@@ -168,7 +168,14 @@ impl ByteBuffer {
         Ok(())
     }
 
-
+    pub fn from_buffer(buffer: &[u8]) -> Self {
+        let mut new_buffer = ByteBuffer::new();
+        for (i, &val) in buffer.iter().enumerate() {
+            new_buffer.set(i, val).unwrap();
+        }
+        new_buffer.seek(0).unwrap();
+        new_buffer
+    }
 }
 
 #[cfg(test)]

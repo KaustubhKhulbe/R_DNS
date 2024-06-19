@@ -1,5 +1,6 @@
 use super::{byte_buffer::ByteBuffer, header::DnsHeader, query_type::QueryType, question::DnsQuestion, record::DnsRecord};
 use std::io::Result;
+use std::net::Ipv4Addr;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DnsPacket {
@@ -66,6 +67,41 @@ impl DnsPacket {
         }
 
         Ok(())
+    }
+
+    pub fn get_random_a(&self) -> Option<Ipv4Addr> {
+        for a in &self.answers {
+            if let DnsRecord::A { addr, .. } = a {
+                return Some(*addr);
+            }
+        }
+        None
+    }
+
+    pub fn get_ns<'a>(&'a self, qname: &'a str) -> impl Iterator<Item = (&'a str, &'a str)> {
+        self.authorities.iter().filter_map(|record| match record {
+            DnsRecord::NS { domain, ns, ..} => Some((domain.as_str(), ns.as_str())),
+            _ => None,
+        }).filter(move |(domain, _)| qname.ends_with(*domain))
+    }
+
+    pub fn get_resolved_ns(&self, qname: &str) -> Option<Ipv4Addr> {
+        self.get_ns(qname).flat_map(|(_, ns)| {
+            self.resources.iter().filter_map(move |record| match record {
+                DnsRecord::A { domain, addr, .. } if domain == ns => Some(addr),
+                _ => None,
+            }).next()
+        }).map(|addr| *addr).next() // @todo: Crashes if no NS record is found
+    }
+
+    pub fn get_unresolved_ns<'a>(&'a self, qname: &'a str) -> Option<&'a str> {
+        self.get_ns(qname).map(|(_, ns)| ns).next()
+    }
+
+    pub fn write_to_bytes(&self) -> Result<[u8; 512]> {
+        let mut buffer = ByteBuffer::new();
+        self.write(&mut buffer)?;
+        Ok(buffer.buffer)
     }
 
 }
