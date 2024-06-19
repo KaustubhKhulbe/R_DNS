@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
-use std::thread;
+use std::{fs, io, thread};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::utils::query_type::QueryType;
@@ -9,7 +10,8 @@ use crate::recursive_lookup;
 use crate::utils::byte_buffer::ByteBuffer;
 use crate::utils::packet::DnsPacket;
 
-use log::{error, info, warn};
+use log::{info, warn};
+use toml::Value;
 use crate::io::Result;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -53,6 +55,48 @@ impl DnsCacheEntry {
     pub fn get_packet(&self) -> Result<DnsPacket> {
         let mut buffer = ByteBuffer::from_buffer(&self.response);
         DnsPacket::from_buffer(&mut buffer)
+    }
+
+    pub fn to_toml(&self) -> Value {
+        let mut map = toml::map::Map::new();
+        
+        // Convert `[u8; 512]` to an array of integers (u32) for TOML serialization
+        let response_array = self.response.iter().map(|&x| Value::Integer(x as i64)).collect();
+        
+        map.insert("response".into(), Value::Array(response_array));
+        map.insert("expiry".into(), Value::Integer(self.expiry as i64));
+        map.insert("ttl".into(), Value::Integer(self.ttl as i64));
+        
+        Value::Table(map)
+    }
+
+    pub fn from_toml(value: &toml::Value) -> Option<DnsCacheEntry> {
+        if let Some(table) = value.as_table() {
+            let response: Vec<u8> = table
+                .get("response")?
+                .as_array()?
+                .iter()
+                .map(|v| v.as_integer().and_then(|x| x.try_into().ok()).unwrap_or(0))
+                .collect();
+    
+            if response.len() != 512 {
+                return None; // Handle error if response size doesn't match expected length
+            }
+    
+            let expiry = table.get("expiry")?.as_integer()?.try_into().ok()?;
+            let ttl = table.get("ttl")?.as_integer()?.try_into().ok()?;
+    
+            let mut response_array: [u8; 512] = [0; 512];
+            response_array.copy_from_slice(&response);
+    
+            Some(DnsCacheEntry {
+                response: response_array,
+                expiry,
+                ttl,
+            })
+        } else {
+            None
+        }
     }
 }
 
@@ -152,23 +196,83 @@ impl DnsCache {
     
         Ok(())
     }
+
+    pub fn to_toml(&self) -> Value {
+        let mut map = toml::map::Map::new();
+
+        // Convert cache entries to TOML format
+        let entries: toml::map::Map<String, Value> = self.cache.iter()
+            .map(|(key, entry)| (key.clone(), entry.to_toml()))
+            .collect();
+
+        map.insert("cache".to_string(), Value::Table(entries));
+
+        // Convert order to TOML format
+        let order_array: Vec<Value> = self.order.iter().map(|s| Value::String(s.clone())).collect();
+        map.insert("order".to_string(), Value::Array(order_array));
+
+        // Insert max_size
+        map.insert("max_size".to_string(), Value::Integer(self.max_size as i64));
+
+        Value::Table(map)
+    }
+
+    pub fn save_to_toml(&self, path: impl AsRef<Path>) -> Result<()> {
+        let toml_content = self.to_toml();
+        let toml_string = toml::to_string(&toml_content).unwrap();
+
+        fs::write(path, toml_string)?;
+
+        Ok(())
+    }
+
+    pub fn from_toml(value: &Value) -> Option<DnsCache> {
+        if let Some(table) = value.as_table() {
+            let cache_table = table.get("cache")?.as_table()?;
+            let cache = cache_table.iter().filter_map(|(key, value)| {
+                DnsCacheEntry::from_toml(value).map(|entry| (key.clone(), entry))
+            }).collect::<HashMap<String, DnsCacheEntry>>();
+            let order = table.get("order")?.as_array()?.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<VecDeque<String>>();
+            let max_size = table.get("max_size")?.as_integer()?.try_into().ok()?;
+            Some(DnsCache { cache, order, max_size })
+        } else {
+            None
+        }
+    }
+
+    pub fn load_from_toml(path: impl AsRef<Path>) -> Result<DnsCache> {
+        let toml_string = fs::read_to_string(path)?;
+        let value = toml::from_str(&toml_string)?;
+        DnsCache::from_toml(&value).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "Invalid TOML format"))
+        
+    }
     
 }
 
 // Thread-safe DnsCache with automatic expiration update thread
 #[derive(Clone)]
 pub struct ThreadSafeDnsCache {
-    cache: Arc<Mutex<DnsCache>>,
+    pub cache: Arc<Mutex<DnsCache>>,
 }
 
 impl ThreadSafeDnsCache {
-    pub fn new(max_size: usize, update_interval: Duration) -> ThreadSafeDnsCache {
-        let cache = Arc::new(Mutex::new(DnsCache::new(max_size)));
+    pub fn new(max_size: usize, update_interval: Duration, cache_store_interval: Duration, path: impl AsRef<Path>) -> ThreadSafeDnsCache {
+        let cache = Arc::new(Mutex::new(match DnsCache::load_from_toml(path) {
+            Ok(cache) => {
+                println!("Cache loaded from file");
+                cache
+            },
+            Err(_) => DnsCache::new(max_size),
+        }));
+
+        cache.lock().unwrap().max_size = max_size;
+
         let cache_clone = Arc::clone(&cache);
 
+        let cache_clone_2 = Arc::clone(&cache);
         // Spawn a thread to periodically update expired entries
         thread::spawn(move || {
-            info!("Starting cache update thread");
+            println!("Starting cache update thread");
             loop {
                 {
                     let mut cache = cache_clone.lock().unwrap();
@@ -177,6 +281,19 @@ impl ThreadSafeDnsCache {
                     }
                 }
                 thread::sleep(update_interval);
+            }
+        });
+
+        thread::spawn(move || {
+            loop {
+                {
+                    let cache = cache_clone_2.lock().unwrap();
+                    info!("Saving cache to file");
+                    if let Err(e) = cache.save_to_toml("dns_cache.toml") {
+                        eprintln!("Failed to save cache to file: {:?}", e);
+                    }
+                }
+                thread::sleep(cache_store_interval);
             }
         });
 
@@ -199,6 +316,13 @@ impl ThreadSafeDnsCache {
     pub fn update(&self, key: &str, packet: &DnsPacket, ttl: u32) -> Result<()> {
         let mut cache = self.cache.lock().unwrap();
         cache.update(key, packet, ttl)
+    }
+}
+
+impl Drop for ThreadSafeDnsCache {
+    fn drop(&mut self) {
+        info!("Saving cache to file");
+        self.cache.lock().unwrap().save_to_toml("dns_cache.toml").unwrap();
     }
 }
 

@@ -1,5 +1,6 @@
+use std::borrow::BorrowMut;
 use std::net::{Ipv4Addr, UdpSocket};
-use std::io;
+use std::{env, io};
 use cache::cache::{DnsCacheEntry, ThreadSafeDnsCache};
 use log::{info, error};
 use flexi_logger::{Logger, FileSpec, Duplicate};
@@ -16,8 +17,19 @@ pub mod utils;
 pub mod cache;
 
 fn main() -> io::Result<()> {
+    let args: Vec<String> = env::args().collect();
+    
+    if args.len() < 3 {
+        eprintln!("Usage: {} <max_size> <update_interval_ms> <cache_store_interval>", args[0]);
+        return Ok(());
+    }
+
+    let max_size: usize = args[1].parse().expect("Invalid max_size");
+    let update_interval_ms: u64 = args[2].parse().expect("Invalid update_interval_ms");
+    let cache_store_interval:u64 = args[2].parse().expect("Invalid cache_store_interval");
+    
     let socket = UdpSocket::bind(("0.0.0.0", 2053))?;
-    let cache = ThreadSafeDnsCache::new(2, std::time::Duration::from_millis(20));
+    let ts_cache = ThreadSafeDnsCache::new(max_size, std::time::Duration::from_millis(update_interval_ms), std::time::Duration::from_secs(cache_store_interval), "dns_cache.toml");
     Logger::try_with_str("info").unwrap()
         .log_to_file(FileSpec::default().directory("logs"))
         .duplicate_to_stderr(Duplicate::All)
@@ -27,8 +39,9 @@ fn main() -> io::Result<()> {
     info!("Server started on port 2053");
 
     loop {
-        match handle_query(socket.try_clone()?, &cache) {
+        match handle_query(socket.try_clone()?, &ts_cache) {
             Ok(packet) => {
+                // ts_cache.cache.lock().unwrap().save_to_toml("dns_cache.toml").unwrap();
                 info!("Query {:?} handled successfully", packet.header.id);
                 for rec in packet.answers {
                     info!("{:?}", rec);
@@ -128,7 +141,6 @@ fn handle_query(socket: UdpSocket, cache: &ThreadSafeDnsCache) -> io::Result<Dns
 
         let key = format!("{}-{:?}", q.name, q.qtype.to_num());
         if let Some(entry) = cache.get(&key) {
-            // println!("Cache hit for {:?}", q);
             let mut response = entry.get_packet().unwrap();
 
             response.header.id = request.header.id;
