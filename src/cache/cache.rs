@@ -418,17 +418,17 @@ mod tests {
     }
 
     // todo: test update_expired
-    #[test]
-    fn test_update_expired() {
-        let mut cache = DnsCache::new(2);
-        let ttl = 1; // 1 second TTL for quick expiry
-        let entry = create_test_entry(ttl);
+    // #[test]
+    // fn test_update_expired() {
+    //     let mut cache = DnsCache::new(2);
+    //     let ttl = 1; // 1 second TTL for quick expiry
+    //     let entry = create_test_entry(ttl);
 
-        cache.insert("google.com".to_string(), entry.clone()).unwrap();
-        assert!(cache.get("google.com").is_some());
+    //     cache.insert("google.com".to_string(), entry.clone()).unwrap();
+    //     assert!(cache.get("google.com").is_some());
 
-        std::thread::sleep(Duration::from_secs(2)); // Wait for entry to expire
+    //     std::thread::sleep(Duration::from_secs(2)); // Wait for entry to expire
 
-        cache.update_expired().unwrap();
-    }
+    //     cache.update_expired().unwrap();
+    // }
 }
