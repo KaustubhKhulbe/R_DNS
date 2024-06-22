@@ -18,15 +18,25 @@ pub mod cache;
 
 fn main() -> io::Result<()> {
     let args: Vec<String> = env::args().collect();
-    
-    if args.len() < 3 {
-        eprintln!("Usage: {} <max_size> <update_interval_ms> <cache_store_interval>", args[0]);
+
+    let mut max_size: usize = 16;
+    let mut update_interval_ms: u64 = 20;
+    let mut cache_store_interval:u64 = 120;
+    let mut enable_cache = true;
+
+    if args.len() == 1 {}
+    if args.len() == 2 {
+        enable_cache = args[1].parse().expect("Invalid enable_cache");
+    }
+    else if args.len() == 3 {
+        max_size = args[1].parse().expect("Invalid max_size");
+        update_interval_ms = args[2].parse().expect("Invalid update_interval_ms");
+        cache_store_interval = args[2].parse().expect("Invalid cache_store_interval");
+    }
+    else{
+        eprintln!("Usage: {} <max_size> <update_interval_ms> <cache_store_interval> \n Usage: {} <enable_cache>", args[0], args[0]);
         return Ok(());
     }
-
-    let max_size: usize = args[1].parse().expect("Invalid max_size");
-    let update_interval_ms: u64 = args[2].parse().expect("Invalid update_interval_ms");
-    let cache_store_interval:u64 = args[2].parse().expect("Invalid cache_store_interval");
     
     let socket = UdpSocket::bind(("0.0.0.0", 2053))?;
     let ts_cache = ThreadSafeDnsCache::new(max_size, std::time::Duration::from_millis(update_interval_ms), std::time::Duration::from_secs(cache_store_interval), "dns_cache.toml");
@@ -37,9 +47,10 @@ fn main() -> io::Result<()> {
         .unwrap();
 
     info!("Server started on port 2053");
+    info!("Cache Status: {:?}", enable_cache);
 
     loop {
-        match handle_query(socket.try_clone()?, &ts_cache) {
+        match handle_query(socket.try_clone()?, &ts_cache, enable_cache) {
             Ok(packet) => {
                 // ts_cache.cache.lock().unwrap().save_to_toml("dns_cache.toml").unwrap();
                 info!("Query {:?} handled successfully", packet.header.id);
@@ -126,7 +137,8 @@ fn lookup(qname: &str, qtype: QueryType, server: (Ipv4Addr, u16)) -> io::Result<
 
 }
 
-fn handle_query(socket: UdpSocket, cache: &ThreadSafeDnsCache) -> io::Result<DnsPacket> {
+fn handle_query(socket: UdpSocket, cache: &ThreadSafeDnsCache, enable_cache: bool) -> io::Result<DnsPacket> {
+    info!("Handling query");
     let mut req_buffer = ByteBuffer::new();
     let (_, src) = socket.recv_from(&mut req_buffer.buffer).unwrap();
     let mut request = DnsPacket::from_buffer(&mut req_buffer).unwrap();
@@ -140,15 +152,17 @@ fn handle_query(socket: UdpSocket, cache: &ThreadSafeDnsCache) -> io::Result<Dns
     if let Some(q) = request.questions.pop() {
 
         let key = format!("{}-{:?}", q.name, q.qtype.to_num());
-        if let Some(entry) = cache.get(&key) {
-            let mut response = entry.get_packet().unwrap();
+        if enable_cache {
+            if let Some(entry) = cache.get(&key) {
+                let mut response = entry.get_packet().unwrap();
 
-            response.header.id = request.header.id;
+                response.header.id = request.header.id;
 
-            let mut res_buffer = ByteBuffer::new();
-            response.write(&mut res_buffer).unwrap();
-            socket.send_to(&res_buffer.buffer[0..res_buffer.position], src).unwrap();
-            return Ok(response);
+                let mut res_buffer = ByteBuffer::new();
+                response.write(&mut res_buffer).unwrap();
+                socket.send_to(&res_buffer.buffer[0..res_buffer.position], src).unwrap();
+                return Ok(response);
+            }
         }
 
         if let Ok(result) = recursive_lookup(&q.name, q.qtype) {
