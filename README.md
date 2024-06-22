@@ -44,3 +44,13 @@ INFO [r_dns] A { domain: "google.com", addr: 142.250.72.206, ttl: 300 }
 
 ##### Starting the Server
 To start the server, simple run `cargo run <max_size> <update_interval_ms> <cache_store_interval>` and to unit test run `cargo test`
+
+## Statistics
+The project includes a full benchmarking to test the performance of the DNS server, by measuring the average query response time and the throughput. The tests have been conducted for both the server with the cache enabled and dissabled. The entire test bench can be run with `python3 benchmark.py`, which starts the server, measures the statistics, then closes it.
+
+##### Results
+
+![MoreData](https://github.com/KaustubhKhulbe/R_DNS/assets/66220294/34b76be2-eb1a-4423-9d5c-e75a8e7c4f4e)
+
+We see that the cache performance far exceeds the performance without the cache. The average query time for google.com without the cache was `81.99ms`, but with the cache was `0.24ms`. Additionally, the cache allows us to get a much higher throughput. 
+
